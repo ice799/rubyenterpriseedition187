@@ -470,6 +470,7 @@ struct RBignum {
 #define FL_USER5     (1<<(FL_USHIFT+5))
 #define FL_USER6     (1<<(FL_USHIFT+6))
 #define FL_USER7     (1<<(FL_USHIFT+7))
+#define FL_NEWLINE   FL_USER7
 
 #define FL_UMASK  (0xff<<FL_USHIFT)
 

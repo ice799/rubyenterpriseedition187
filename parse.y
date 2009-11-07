@@ -410,7 +410,7 @@ stmts		: none
 		    }
 		| stmts terms stmt
 		    {
-			$$ = block_append($1, $3);
+			$$ = block_append($1, newline_node($3));
 		    }
 		| error stmt
 		    {
@@ -4617,7 +4617,7 @@ static NODE*
 newline_node(node)
     NODE *node;
 {
-    FL_SET(node, NODE_NEWLINE);
+    FL_SET(node, FL_NEWLINE);
     return node;
 }
 

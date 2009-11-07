@@ -2961,12 +2961,13 @@ rb_eval(self, n)
   again:
     if (!node) RETURN(Qnil);
 
-    ruby_current_node = node;
-    if (FL_TEST(node, NODE_NEWLINE)) {
+    if (FL_TEST(node, FL_NEWLINE)) {
       EXEC_EVENT_HOOK(RUBY_EVENT_LINE, node, self,
           ruby_frame->last_func,
           ruby_frame->last_class);
     }
+
+    ruby_current_node = node;
     switch (nd_type(node)) {
       case NODE_BLOCK:
 	if (contnode) {

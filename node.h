@@ -159,8 +159,6 @@ extern NODE *ruby_top_cref;
 #define nd_set_type(n,t) \
     RNODE(n)->flags=((RNODE(n)->flags&~FL_UMASK)|(((t)<<FL_USHIFT)&FL_UMASK))
 
-#define NODE_NEWLINE FL_USER7
-
 #define NODE_LSHIFT (FL_USHIFT+8)
 #define NODE_LMASK  (((long)1<<(sizeof(NODE*)*CHAR_BIT-NODE_LSHIFT))-1)
 #define nd_line(n) ((unsigned int)(((RNODE(n))->flags>>NODE_LSHIFT)&NODE_LMASK))
