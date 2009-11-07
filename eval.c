@@ -461,7 +461,7 @@ rb_define_alloc_func(klass, func)
     VALUE (*func) _((VALUE));
 {
     Check_Type(klass, T_CLASS);
-    rb_add_method(rb_singleton_class(klass), ID_ALLOCATOR, NEW_CFUNC(func, 0),
+    rb_add_method(rb_singleton_class(klass), ID_ALLOCATOR, NEW_NODE_LONGLIFE(NODE_CFUNC, func, 0, 0),
 		  NOEX_PRIVATE);
 }
 

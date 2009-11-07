@@ -829,7 +829,7 @@ rb_define_method_id(klass, name, func, argc)
     VALUE (*func)();
     int argc;
 {
-    rb_add_method(klass, name, NEW_CFUNC(func,argc), NOEX_PUBLIC);
+    rb_add_method(klass, name, NEW_NODE_LONGLIFE(NODE_CFUNC, func, argc, 0), NOEX_PUBLIC);
 }
 
 void
@@ -853,7 +853,7 @@ rb_define_protected_method(klass, name, func, argc)
     VALUE (*func)();
     int argc;
 {
-    rb_add_method(klass, rb_intern(name), NEW_CFUNC(func, argc), NOEX_PROTECTED);
+    rb_add_method(klass, rb_intern(name), NEW_NODE_LONGLIFE(NODE_CFUNC, func, argc, 0), NOEX_PROTECTED);
 }
 
 void
@@ -863,7 +863,7 @@ rb_define_private_method(klass, name, func, argc)
     VALUE (*func)();
     int argc;
 {
-    rb_add_method(klass, rb_intern(name), NEW_CFUNC(func, argc), NOEX_PRIVATE);
+    rb_add_method(klass, rb_intern(name), NEW_NODE_LONGLIFE(NODE_CFUNC, func, argc, 0), NOEX_PRIVATE);
 }
 
 void

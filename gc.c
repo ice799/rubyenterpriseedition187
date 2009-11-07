@@ -208,6 +208,7 @@ ruby_xfree(x)
 extern int ruby_in_compile;
 static int dont_gc;
 static int during_gc;
+static int longlife_collection;
 static int need_call_final = 0;
 static st_table *finalizer_table = 0;
 
@@ -344,16 +345,36 @@ typedef struct RVALUE {
 #endif
 
 static RVALUE *freelist = 0;
+static RVALUE *longlife_freelist = 0;
 static RVALUE *deferred_final_list = 0;
+
+enum lifetime {
+        lifetime_normal,
+        lifetime_longlife,
+};
+
+typedef struct remembered_set {
+       RVALUE *obj;
+       struct remembered_set *next;
+} remembered_set_t;
+
+static struct {
+  remembered_set_t *ptr;
+  remembered_set_t *freed;
+} remembered_set;
 
 #define HEAPS_INCREMENT 10
 static struct heaps_slot {
     void *membase;
     RVALUE *slot;
     int limit;
+    enum lifetime lifetime;
 } *heaps;
+
+/* XXX these should be size_t's, for sure */
 static int heaps_length = 0;
 static int heaps_used   = 0;
+static int longlife_used = 0;
 
 #define HEAP_MIN_SLOTS 10000
 static int heap_slots = HEAP_MIN_SLOTS;
@@ -363,7 +384,7 @@ static int heap_slots = HEAP_MIN_SLOTS;
 static RVALUE *himem, *lomem;
 
 static void
-add_heap()
+add_heap(RVALUE **list, enum lifetime lifetime)
 {
     RVALUE *p, *pend;
 
@@ -401,19 +422,21 @@ add_heap()
             p = (RVALUE*)((VALUE)p + sizeof(RVALUE) - ((VALUE)p % sizeof(RVALUE)));
         heaps[heaps_used].slot = p;
         heaps[heaps_used].limit = heap_slots;
+        heaps[heaps_used].lifetime = lifetime;
 	break;
     }
     pend = p + heap_slots;
     if (lomem == 0 || lomem > p) lomem = p;
     if (himem < pend) himem = pend;
+    if (lifetime == lifetime_longlife) longlife_used++;
     heaps_used++;
     heap_slots *= 1.8;
     if (heap_slots <= 0) heap_slots = HEAP_MIN_SLOTS;
 
     while (p < pend) {
 	p->as.free.flags = 0;
-	p->as.free.next = freelist;
-	freelist = p;
+	p->as.free.next = *list;
+	*list = p;
 	p++;
     }
 }
@@ -443,6 +466,62 @@ rb_newobj()
     RANY(obj)->line = ruby_sourceline;
 #endif
     return obj;
+}
+
+static VALUE
+rb_newobj_from_longlife_heap()
+{
+        VALUE obj;
+        if (!longlife_freelist) {
+                add_heap(&longlife_freelist, lifetime_longlife);
+        }
+
+        obj = (VALUE)longlife_freelist;
+        longlife_freelist = longlife_freelist->as.free.next;
+        MEMZERO((void*)obj, RVALUE, 1);
+
+        FL_SET(RANY(obj), FL_MARK);
+
+#ifdef GC_DEBUG
+        RANY(obj)->file = ruby_sourcefile;
+        RANY(obj)->line = ruby_sourceline;
+#endif
+        return obj;
+}
+
+VALUE
+rb_gc_write_barrier(VALUE ptr)
+{
+  remembered_set_t *tmp;
+  RVALUE *obj = RANY(ptr);
+
+  if (!SPECIAL_CONST_P(ptr) &&
+      !(RBASIC(ptr)->flags & FL_MARK || RBASIC(ptr)->flags & FL_REMEMBERED_SET)) {
+    if (remembered_set.freed) {
+      tmp = remembered_set.freed;
+      remembered_set.freed = remembered_set.freed->next;
+    }
+    else {
+      tmp = ALLOC(remembered_set_t);
+    }
+    tmp->next = remembered_set.ptr;
+    tmp->obj = obj;
+    obj->as.basic.flags |= FL_REMEMBERED_SET;
+    remembered_set.ptr = tmp;
+  }
+  return ptr;
+}
+
+VALUE
+rb_newobj_longlife(void)
+{
+       VALUE obj;
+
+        if (during_gc)
+          rb_bug("object allocation during garbage collection phase");
+
+        obj = rb_newobj_from_longlife_heap();
+        return obj;
 }
 
 VALUE
@@ -1080,12 +1159,13 @@ gc_mark_children(ptr, lev)
 static int obj_free _((VALUE));
 
 static inline void
-add_freelist(p)
+add_freelist(list, p)
+    RVALUE **list;
     RVALUE *p;
 {
     p->as.free.flags = 0;
-    p->as.free.next = freelist;
-    freelist = p;
+    p->as.free.next = *list;
+    *list = p;
 }
 
 static void
@@ -1096,7 +1176,7 @@ finalize_list(p)
 	RVALUE *tmp = p->as.free.next;
 	run_final((VALUE)p);
 	if (!FL_TEST(p, FL_SINGLETON)) { /* not freeing page */
-	    add_freelist(p);
+	    add_freelist(&freelist, p);
 	}
 	p = tmp;
     }
@@ -1110,7 +1190,11 @@ free_unused_heaps()
     for (i = j = 1; j < heaps_used; i++) {
 	if (heaps[i].limit == 0) {
 	    free(heaps[i].membase);
-	    heaps_used--;
+
+            if (heaps[i].lifetime == lifetime_longlife)
+              longlife_used--;
+
+            heaps_used--;
 	}
 	else {
 	    if (i != j) {
@@ -1168,6 +1252,7 @@ gc_sweep()
 	RVALUE *final = final_list;
 	int deferred;
 
+        if (heaps[i].lifetime == lifetime_longlife) continue;
 	p = heaps[i].slot; pend = p + heaps[i].limit;
 	while (p < pend) {
 	    if (!(p->as.basic.flags & FL_MARK)) {
@@ -1183,7 +1268,7 @@ gc_sweep()
 		    final_list = p;
 		}
 		else {
-		    add_freelist(p);
+		    add_freelist(&freelist, p);
 		}
 		n++;
 	    }
@@ -1216,7 +1301,10 @@ gc_sweep()
     }
     malloc_increase = 0;
     if (freed < free_min) {
-	add_heap();
+      if (longlife_used)
+        longlife_collection = Qtrue;
+
+      add_heap(&freelist, lifetime_normal);
     }
     during_gc = 0;
 
@@ -1229,11 +1317,67 @@ gc_sweep()
     free_unused_heaps();
 }
 
+static void
+remembered_set_recycle()
+{
+    remembered_set_t *top = 0, *rem, *next;
+
+    rem = remembered_set.ptr;
+    while (rem) {
+        next = rem->next;
+        if (RBASIC(rem->obj)->flags & FL_MARK) {
+            top = rem;
+        }
+        else {
+            if (top) {
+                top->next = next;
+            }
+            else {
+                remembered_set.ptr = next;
+            }
+            rem->obj = 0;
+            rem->next = remembered_set.freed;
+            remembered_set.freed = rem;
+        }
+        rem = next;
+    }
+}
+
+static void
+gc_sweep_for_longlife()
+{
+    RVALUE *p, *pend;
+    size_t i, freed = 0;
+
+    longlife_freelist = 0;
+    for (i = 0; i < heaps_used; i++) {
+        if (heaps[i].lifetime == lifetime_normal) continue;
+        p = heaps[i].slot;
+        pend = p + heaps[i].limit;
+        while (p < pend) {
+          if (!(p->as.basic.flags & FL_MARK)) {
+            if (p->as.basic.flags) {
+              obj_free((VALUE)p);
+            }
+            add_freelist(&longlife_freelist, p);
+            freed++;
+          }
+          p++;
+        }
+    }
+
+    remembered_set_recycle();
+    longlife_collection = Qfalse;
+}
+
+
 void
 rb_gc_force_recycle(p)
     VALUE p;
 {
-    add_freelist(p);
+  if (!(RBASIC(p)->flags & FL_MARK || RBASIC(p)->flags & FL_REMEMBERED_SET)) {
+    add_freelist(&freelist, (RVALUE *)p);
+  }
 }
 
 static inline void
@@ -1418,6 +1562,37 @@ int rb_setjmp (rb_jmp_buf);
 #endif /* __GNUC__ */
 
 static void
+rb_gc_mark_remembered_set()
+{
+    remembered_set_t *rem;
+
+    rem = remembered_set.ptr;
+    while (rem) {
+        rb_gc_mark((VALUE)rem->obj);
+        rem = rem->next;
+    }
+}
+
+static void
+clear_mark_longlife_heaps()
+{
+    int i;
+
+    for (i = 0; i < heaps_used; i++) {
+        RVALUE *p, *pend;
+
+        if (heaps[i].lifetime == lifetime_longlife) {
+            p = heaps[i].slot; pend = p + heaps[i].limit;
+            for (;p < pend; p++) {
+                if (p->as.basic.flags & FL_MARK) {
+                    RBASIC(p)->flags &= ~FL_MARK;
+                }
+            }
+        }
+    }
+}
+
+static void
 garbage_collect()
 {
     struct gc_list *list;
@@ -1432,7 +1607,7 @@ garbage_collect()
 #endif
     if (dont_gc || during_gc) {
 	if (!freelist) {
-	    add_heap();
+	    add_heap(&freelist, lifetime_normal);
 	}
 	return;
     }
@@ -1440,6 +1615,14 @@ garbage_collect()
     during_gc++;
 
     init_mark_stack();
+
+    if (longlife_collection) {
+        clear_mark_longlife_heaps();
+    }
+    else {
+        rb_gc_mark_remembered_set();
+    }
+
 
     gc_mark((VALUE)ruby_current_node, 0);
 
@@ -1513,6 +1696,10 @@ garbage_collect()
 	rb_gc_abort_threads();
     } while (!MARK_STACK_EMPTY);
 
+    if (longlife_collection) {
+        gc_sweep_for_longlife();
+    }
+
     gc_sweep();
 }
 
@@ -1536,8 +1723,12 @@ rb_gc()
 VALUE
 rb_gc_start()
 {
-    rb_gc();
-    return Qnil;
+  if (longlife_used) {
+    longlife_collection = Qtrue;
+  }
+
+  rb_gc();
+  return Qnil;
 }
 
 void
@@ -1695,7 +1886,7 @@ Init_heap()
     if (!rb_gc_stack_start) {
 	Init_stack(0);
     }
-    add_heap();
+    add_heap(&freelist, lifetime_normal);
 }
 
 static VALUE
