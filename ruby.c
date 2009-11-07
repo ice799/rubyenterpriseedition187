@@ -373,7 +373,7 @@ require_libraries()
 
     save[0] = ruby_eval_tree;
     save[1] = ruby_eval_tree_begin;
-    save[2] = NEW_NEWLINE(0);
+    save[2] = NEW_BEGIN(0);
     ruby_eval_tree = ruby_eval_tree_begin = 0;
     ruby_current_node = 0;
     Init_ext();		/* should be called here for some reason :-( */
@@ -827,7 +827,7 @@ proc_options(argc, argv)
 		}
 		if (!script) script = argv[0];
 		script = ruby_sourcefile = rb_source_filename(script);
-		script_node = NEW_NEWLINE(0);
+		script_node = NEW_BEGIN(0);
 #if defined DOSISH || defined __CYGWIN__
 		translate_char(ruby_sourcefile, '\\', '/');
 #endif

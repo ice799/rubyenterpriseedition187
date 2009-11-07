@@ -2541,10 +2541,6 @@ is_defined(self, node, buf)
 	}
 	break;
 
-      case NODE_NEWLINE:
-	node = node->nd_next;
-	goto again;
-
       default:
 	PUSH_TAG(PROT_NONE);
 	if ((state = EXEC_TAG()) == 0) {
@@ -2727,7 +2723,7 @@ call_trace_func(event, node, self, id, klass)
     if (id == ID_ALLOCATOR) return;
 
     if (!(node_save = ruby_current_node)) {
-	node_save = NEW_NEWLINE(0);
+         node_save = NEW_BEGIN(0);
     }
     tracing = 1;
     prev = ruby_frame;
@@ -2966,6 +2962,11 @@ rb_eval(self, n)
     if (!node) RETURN(Qnil);
 
     ruby_current_node = node;
+    if (FL_TEST(node, NODE_NEWLINE)) {
+      EXEC_EVENT_HOOK(RUBY_EVENT_LINE, node, self,
+          ruby_frame->last_func,
+          ruby_frame->last_class);
+    }
     switch (nd_type(node)) {
       case NODE_BLOCK:
 	if (contnode) {
@@ -4155,14 +4156,6 @@ rb_eval(self, n)
 	    else result = Qnil;
 	}
 	break;
-
-      case NODE_NEWLINE:
-	EXEC_EVENT_HOOK(RUBY_EVENT_LINE, node, self, 
-			ruby_frame->last_func,
-			ruby_frame->last_class);
-	node = node->nd_next;
-	goto again;
-
       default:
 	unknown_node(node);
     }
@@ -7025,7 +7018,7 @@ rb_load(fname, wrap)
     last_func = ruby_frame->last_func;
     last_node = ruby_current_node;
     if (!ruby_current_node && ruby_sourcefile) {
-	last_node = NEW_NEWLINE(0);
+	last_node = NEW_BEGIN(0);
     }
     ruby_current_node = 0;
     if (state == 0) {

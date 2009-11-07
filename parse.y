@@ -410,7 +410,7 @@ stmts		: none
 		    }
 		| stmts terms stmt
 		    {
-			$$ = block_append($1, newline_node($3));
+			$$ = block_append($1, $3);
 		    }
 		| error stmt
 		    {
@@ -1266,7 +1266,7 @@ aref_args	: none
 		| tSTAR arg opt_nl
 		    {
 			value_expr($2);
-			$$ = NEW_NEWLINE(NEW_SPLAT($2));
+			$$ = newline_node(NEW_SPLAT($2));
 		    }
 		;
 
@@ -2180,11 +2180,7 @@ string_content	: tSTRING_CONTENT
 			lex_strterm = $<node>2;
 			COND_LEXPOP();
 			CMDARG_LEXPOP();
-			if (($$ = $3) && nd_type($$) == NODE_NEWLINE) {
-			    $$ = $$->nd_next;
-			    rb_gc_force_recycle((VALUE)$3);
-			}
-			$$ = new_evstr($$);
+			$$ = new_evstr($3);
 		    }
 		;
 
@@ -4621,17 +4617,8 @@ static NODE*
 newline_node(node)
     NODE *node;
 {
-    NODE *nl = 0;
-    if (node) {
-	int line;
-	if (nd_type(node) == NODE_NEWLINE) return node;
-	line = nd_line(node);
-	node = remove_begin(node);
-	nl = NEW_NEWLINE(node);
-	nd_set_line(nl, line);
-	nl->nd_nth = line;
-    }
-    return nl;
+    FL_SET(node, NODE_NEWLINE);
+    return node;
 }
 
 static void
@@ -4675,12 +4662,8 @@ block_append(head, tail)
 
     if (tail == 0) return head;
 
-  again:
     if (h == 0) return tail;
     switch (nd_type(h)) {
-      case NODE_NEWLINE:
-	h = h->nd_next;
-	goto again;
       case NODE_LIT:
       case NODE_STR:
 	parser_warning(h, "unused literal ignored");
@@ -4698,7 +4681,6 @@ block_append(head, tail)
 
     if (RTEST(ruby_verbose)) {
 	NODE *nd = end->nd_head;
-      newline:
 	switch (nd_type(nd)) {
 	  case NODE_RETURN:
 	  case NODE_BREAK:
@@ -4707,10 +4689,6 @@ block_append(head, tail)
 	  case NODE_RETRY:
 	    parser_warning(nd, "statement not reached");
 	    break;
-
-	case NODE_NEWLINE:
-	    nd = nd->nd_next;
-	    goto newline;
 
 	  default:
 	    break;
@@ -4840,14 +4818,10 @@ new_evstr(node)
 {
     NODE *head = node;
 
-  again:
     if (node) {
 	switch (nd_type(node)) {
 	  case NODE_STR: case NODE_DSTR: case NODE_EVSTR:
 	    return node;
-	  case NODE_NEWLINE:
-	    node = node->nd_next;
-	    goto again;
 	}
     }
     return NEW_EVSTR(head);
@@ -5166,10 +5140,6 @@ value_expr0(node)
 	    node = node->nd_2nd;
 	    break;
 
-	  case NODE_NEWLINE:
-	    node = node->nd_next;
-	    break;
-
 	  default:
 	    return Qtrue;
 	}
@@ -5186,13 +5156,8 @@ void_expr0(node)
 
     if (!RTEST(ruby_verbose)) return;
 
-  again:
     if (!node) return;
     switch (nd_type(node)) {
-      case NODE_NEWLINE:
-	node = node->nd_next;
-	goto again;
-
       case NODE_CALL:
 	switch (node->nd_mid) {
 	  case '+':
@@ -5295,15 +5260,10 @@ remove_begin(node)
 {
     NODE **n = &node;
     while (*n) {
-	switch (nd_type(*n)) {
-	  case NODE_NEWLINE:
-	    n = &(*n)->nd_next;
-	    continue;
-	  case NODE_BEGIN:
-	    *n = (*n)->nd_body;
-	  default:
-	    return node;
+        if (nd_type(*n) != NODE_BEGIN) {
+	  return node;
 	}
+        *n = (*n)->nd_body;
     }
     return node;
 }
@@ -5323,7 +5283,6 @@ assign_in_cond(node)
       case NODE_IASGN:
 	break;
 
-      case NODE_NEWLINE:
       default:
 	return 0;
     }
@@ -5419,10 +5378,6 @@ range_op(node)
     if (node == 0) return 0;
 
     type = nd_type(node);
-    if (type == NODE_NEWLINE) {
-	node = node->nd_next;
-	type = nd_type(node);
-    }
     value_expr(node);
     if (type == NODE_LIT && FIXNUM_P(node->nd_lit)) {
 	warn_unless_e_option(node, "integer literal in conditional range");
@@ -5522,10 +5477,6 @@ cond(node)
 {
     if (node == 0) return 0;
     value_expr(node);
-    if (nd_type(node) == NODE_NEWLINE){
-	node->nd_next = cond0(node->nd_next);
-	return node;
-    }
     return cond0(node);
 }
 
@@ -5557,11 +5508,6 @@ cond_negative(nodep)
       case NODE_NOT:
 	*nodep = c->nd_body;
 	return 1;
-      case NODE_NEWLINE:
-	if (c->nd_next && nd_type(c->nd_next) == NODE_NOT) {
-	    c->nd_next = c->nd_next->nd_body;
-	    return 1;
-	}
     }
     return 0;
 }

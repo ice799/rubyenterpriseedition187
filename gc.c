@@ -878,7 +878,6 @@ gc_mark_children(ptr, lev)
 	  case NODE_SUPER:	/* 3 */
 	  case NODE_FCALL:
 	  case NODE_DEFN:
-	  case NODE_NEWLINE:
 	    ptr = (VALUE)obj->as.node.u3.node;
 	    goto again;
 
